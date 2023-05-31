@@ -5,13 +5,26 @@
 ;;; Important constants
 (define screen-width 1280)
 (define screen-height 720)
+(define debug-mode #f)
+(define (debug . args)
+  (when debug-mode
+    (if (= (length args) 1)
+        (println (car args))
+        (apply printf args))))
 
-
+#|
 ;;; Workman layout
 (define key-up KEY_R)
 (define key-down KEY_H)
 (define key-left KEY_S)
 (define key-right KEY_T)
+(define key-shoot KEY_SPACE)
+|#
+;;; QWERTY layout
+(define key-up KEY_W)
+(define key-down KEY_S)
+(define key-left KEY_A)
+(define key-right KEY_D)
 (define key-shoot KEY_SPACE)
 
 
@@ -30,7 +43,7 @@
            ,@(for/list ([method methods])
                `(define (,method . args) (send/apply self ,method args)))
            ,(read (open-input-string str))))
-      (printf "to eval: ~v~n" template)
+      (debug "to eval: ~v~n" template)
       ((-eval template ns) this))))
 
 
@@ -48,7 +61,7 @@
        (inner (void) tick))
 
      (define/public (die)
-       (printf "dead: ~a~n" this%)
+       (debug "dead: ~a~n" this%)
        (set-remove! entities this))
 
      (define/public (touching? that)
