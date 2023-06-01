@@ -30,6 +30,8 @@
 
 ;;; Graphics and textures
 (define font (delay (LoadFontEx "SourceCodePro-Medium.ttf" 24 #f 0)))
+(define tex (delay (LoadTexture "ship-sheet.png")))
+(define shot-tex (delay (LoadTexture "shot.png")))
 
 
 (define (eval-mixin %)
@@ -57,8 +59,11 @@
      (init-field x)
      (init-field y)
 
-     (define/pubment (tick)
-       (inner (void) tick))
+     (define/public (tick)
+       (void))
+
+     (define/public (draw)
+       (void))
 
      (define/public (die)
        (debug "dead: ~a~n" this%)
@@ -69,46 +74,106 @@
             ((abs (- (get-field y this) (get-field y that))) . < . 10))))))
 
 
+;;; Maybe use macros to preload each texture properly? Or if I can just do that with functions?
+;;; Then, class or mixin for an object with a hitbox. Use the sprite sheet size as the hitbox size. Have the collision detection be based on this class and use the hitbox.
+
+(define (sprite-mixin-first %)
+  ;; (printf "building sprite-mixin-first off ~v~n" %)
+  ;; (println (interface->method-names (class->interface %)))
+  (class % (super-new) (inherit-field x y)
+    (init-field width)
+    (init-field height)
+    (init-field scale)
+    (init-field sprite-tex)
+    (init-field [sprites-across 1])
+    (init-field [sprites-in-sheet 1])
+    (init-field [sprite-index 0])
+
+    (define/override (draw)
+      (super draw)
+      (define u (* width (exact->inexact (modulo sprite-index sprites-across))))
+      (define v (* height (exact->inexact (quotient sprite-index sprites-across))))
+      #;(define source (make-Rectangle 0.0 (add1 height) 100.0 height))
+      #;(define source (make-Rectangle 0.0 0.0 100.0 height))
+      (define source (make-Rectangle u v width height))
+      (DrawTexturePro (force sprite-tex) ;; texture
+                      source
+                      (make-Rectangle x y (* width scale) (* height scale)) ;; dest
+                      (make-Vector2 0.0 0.0) ;; origin
+                      0.0 ;; rotation
+                      ; scale
+                      WHITE))))
+
+(define (flipper-mixin %)
+  ;; (printf "building flipper-mixin off ~v~n" %)
+  ;; (println (interface->method-names (class->interface %)))
+  (class % (super-new) (inherit-field sprite-index sprites-in-sheet)
+    (init-field flipper-ticks)
+    (define flipper-count 0)
+
+    (define/override (tick)
+      (super tick)
+      (set! flipper-count (add1 flipper-count))
+      (when (flipper-count . >= . flipper-ticks)
+        (set! sprite-index (add1 sprite-index))
+        (when (sprite-index . >= . sprites-in-sheet)
+          (set! sprite-index 0))
+        (set! flipper-count 0)))))
+
+
 ;;; The ship that the player controls.
 (define ship%
-  (class entity% (super-new)
-    (inherit-field x y)
+  (class (flipper-mixin (sprite-mixin-first entity%))
+    (super-new [width 471.0]
+               [height 391.0]
+               [scale 0.5]
+               [sprites-across 2]
+               [sprites-in-sheet 2]
+               [sprite-tex tex]
+               [flipper-ticks 20])
+    (inherit-field x y width height scale)
+    (field [speed 3.45]
+           [last-shot 0]
+           [shot-spacing 180])
 
-    (define/augment (tick)
+    (define/override (tick)
+      (super tick)
       (when (IsKeyDown key-right)
-        (set! x (+ x 2)))
+        (set! x (+ x speed)))
       (when (IsKeyDown key-left)
-        (set! x (- x 2)))
+        (set! x (- x speed)))
       (when (IsKeyDown key-up)
-        (set! y (- y 2)))
+        (set! y (- y speed)))
       (when (IsKeyDown key-down)
-        (set! y (+ y 2)))
-      (when (IsKeyPressed key-shoot)
-        (new shot% [x (+ 4 x)] [y y])))
-
-    (define/public (draw)
-      (DrawTextEx (force font) "SHIP" (make-Vector2 x y) 24.0 0.0 BLUE))))
+        (set! y (+ y speed)))
+      (when (IsKeyDown key-shoot)
+        ;; ensure time spacing between shots
+        (when ((current-milliseconds) . > . (+ last-shot shot-spacing))
+          (for ([ys (list 178.0 230.0)])
+            (new shot% [x (+ x (* (- width 70) scale))] [y (+ y (* ys scale))]))
+          (set! last-shot (current-milliseconds)))))))
 
 
 ;;; Shots fired by the player ship.
 (define shot%
-  (class entity% (super-new)
-    (inherit-field x y)
-    (inherit die)
+  (class (sprite-mixin-first entity%)
+    (super-new [width 74.0]
+               [height 20.0]
+               [scale 0.5]
+               [sprite-tex shot-tex])
+    (inherit-field x y width height)
 
-    (define speed 4)
+    (define speed 8)
 
-    (define/augment (tick)
+    (define/override (tick)
+      (super tick)
       (set! x (+ x speed))
       (for ([entity (in-set entities)])
         (when (and (is-a? entity enemy%) (send this touching? entity))
           (send entity damage)
           (send this die)))
       (when (x . > . screen-width)
-        (send this die)))
-
-    (define/public (draw)
-      (DrawTextEx (force font) "=" (make-Vector2 x y) 24.0 0.0 YELLOW))))
+        (send this die)))))
 
 
 ;;; An enemy that can be shot and attacked to evaluate its code. Most enemies will simply have their code as (die).
@@ -131,7 +196,8 @@
               [else (string-append "(" base-command ")")])))
     (compute-display-text)
 
-    (define/augment (tick)
+    (define/override (tick)
+      (super tick)
       (set! x (+ x speed))
       (when (x . < . 0)
         (send this die)))
@@ -142,7 +208,8 @@
       (when (shots-taken . >= . 3)
         (send this eval command)))
 
-    (define/public (draw)
+    (define/override (draw)
+      (super draw)
       (DrawTextEx (force font) display-text (make-Vector2 x y) 24.0 0.0 RED))))
 
 
@@ -154,21 +221,22 @@
 (define (main)
   (SetTargetFPS 60)
 
+  ;; must initialise window (and opengl context) before any textures can be loaded
   (InitWindow screen-width screen-height "Basic Window")
 
   (define ball-position (make-Vector2 (/ screen-width 2.0) (/ screen-height 2.0)))
-  (define tex (LoadTexture "/home/cadence/Downloads/hearts.png"))
+  ;; (define tex (LoadTexture "/home/cadence/Downloads/hearts.png"))
 
   (let loop ((close? #f))
+
+    (sleep)
 
     (for ([entity (in-set entities)])
       (send entity tick))
 
     (BeginDrawing)
-    (ClearBackground BLACK)
-    (DrawTextEx (force font) "you'll DIE" (make-Vector2 10.0 10.0) 24.0 0.0 WHITE)
-    ;; (DrawTextureV tex ball-position (make-Color 255 255 255 255))
-
+    (ClearBackground RAYWHITE)
+    (DrawTextEx (force font) "you'll DIE" (make-Vector2 10.0 10.0) 24.0 0.0 BLACK)
     (for ([entity (in-set entities)])
       (send entity draw))
     (EndDrawing)
@@ -177,4 +245,4 @@
         (CloseWindow)
         (loop (WindowShouldClose)))))
 
-(main)
+(thread main)
