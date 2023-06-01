@@ -1,5 +1,11 @@
 #lang racket
-(require raylib/generated/unsafe)
+(require racket/generator
+         raylib/generated/unsafe)
+
+
+;;; Macros
+(define-syntax-rule (inc var)
+  (set! var (add1 var)))
 
 
 ;;; Important constants
@@ -32,6 +38,7 @@
 (define font (delay (LoadFontEx "SourceCodePro-Medium.ttf" 24 #f 0)))
 (define tex (delay (LoadTexture "ship-sheet.png")))
 (define shot-tex (delay (LoadTexture "shot.png")))
+(define basic-tex (delay (LoadTexture "basic-sheet.png")))
 
 
 (define (eval-mixin %)
@@ -67,18 +74,14 @@
 
      (define/public (die)
        (debug "dead: ~a~n" this%)
-       (set-remove! entities this))
-
-     (define/public (touching? that)
-       (and ((abs (- (get-field x this) (get-field x that))) . < . 10)
-            ((abs (- (get-field y this) (get-field y that))) . < . 10))))))
+       (set-remove! entities this)))))
 
 
 ;;; Maybe use macros to preload each texture properly? Or if I can just do that with functions?
 ;;; Then, class or mixin for an object with a hitbox. Use the sprite sheet size as the hitbox size. Have the collision detection be based on this class and use the hitbox.
 
-(define (sprite-mixin-first %)
-  ;; (printf "building sprite-mixin-first off ~v~n" %)
+(define (sprite-mixin %)
+  ;; (printf "building sprite-mixin off ~v~n" %)
   ;; (println (interface->method-names (class->interface %)))
   (class % (super-new) (inherit-field x y)
     (init-field width)
@@ -102,7 +105,16 @@
                       (make-Vector2 0.0 0.0) ;; origin
                       0.0 ;; rotation
                       ; scale
-                      WHITE))))
+                      WHITE))
+
+    (define/public (touching? that)
+      (and
+       (or (<= (get-field x this) (get-field x that) (+ (get-field x this) (get-field width this)))
+           (<= (get-field x that) (get-field x this) (+ (get-field x that) (get-field width that))))
+       (or (<= (get-field y this) (get-field y that) (+ (get-field y this) (get-field width this)))
+           (<= (get-field y that) (get-field y this) (+ (get-field y that) (get-field width that)))))
+      #;(and ((abs (- (get-field x this) (get-field x that))) . < . 10)
+           ((abs (- (get-field y this) (get-field y that))) . < . 10)))))
 
 (define (flipper-mixin %)
   ;; (printf "building flipper-mixin off ~v~n" %)
@@ -123,7 +135,7 @@
 
 ;;; The ship that the player controls.
 (define ship%
-  (class (flipper-mixin (sprite-mixin-first entity%))
+  (class (flipper-mixin (sprite-mixin entity%))
     (super-new [width 471.0]
                [height 391.0]
                [scale 0.5]
@@ -132,7 +144,7 @@
                [sprite-tex tex]
                [flipper-ticks 20])
     (inherit-field x y width height scale)
-    (field [speed 3.45]
+    (field [speed 4]
            [last-shot 0]
            [shot-spacing 180])
 
@@ -156,7 +168,7 @@
 
 ;;; Shots fired by the player ship.
 (define shot%
-  (class (sprite-mixin-first entity%)
+  (class (sprite-mixin entity%)
     (super-new [width 74.0]
                [height 20.0]
                [scale 0.5]
@@ -178,11 +190,19 @@
 
 ;;; An enemy that can be shot and attacked to evaluate its code. Most enemies will simply have their code as (die).
 (define enemy%
-  (class entity% (super-new)
+  (class (flipper-mixin (sprite-mixin entity%))
+    (super-new [width 225.0]
+               [height 121.0]
+               [scale 0.5]
+               [sprite-tex basic-tex]
+               [sprites-across 3]
+               [sprites-in-sheet 3]
+               [flipper-ticks 6])
     (inherit-field x y)
 
-    (field [shots-taken 0])
-    (define speed -1)
+    (field [shots-taken 0]
+           [can-be-hit-this-tick? #t])
+    (define speed -2)
     (field [base-command "die"])
 
     (define command (string-append "(" base-command ")"))
@@ -198,25 +218,50 @@
 
     (define/override (tick)
       (super tick)
+      (set! can-be-hit-this-tick? #t)
       (set! x (+ x speed))
       (when (x . < . 0)
         (send this die)))
 
     (define/public (damage)
-      (set! shots-taken (add1 shots-taken))
-      (compute-display-text)
-      (when (shots-taken . >= . 3)
-        (send this eval command)))
+      (when can-be-hit-this-tick?
+        (set! shots-taken (add1 shots-taken))
+        (set! can-be-hit-this-tick? #f)
+        (compute-display-text)
+        (when (shots-taken . >= . 3)
+          (send this eval command))))
 
     (define/override (draw)
       (super draw)
-      (DrawTextEx (force font) display-text (make-Vector2 x y) 24.0 0.0 RED))))
+      (define open-width (if (= shots-taken 2)
+                             -11
+                             0))
+      (DrawTextEx (force font) display-text (make-Vector2 (+ x 46 open-width) (+ y 18)) 24.0 0.0 WHITE))))
+
+
+(define spawner%
+  (class entity%
+    (super-new [x 0.0] [y 0.0])
+    (field [last-spawn 0]
+           [spawn-frequency 80]
+           [next-y-pos (infinite-generator
+                        (yield 50.0)
+                        (yield 250.0)
+                        (yield 400.0)
+                        (yield 600.0))])
+    (define/override (tick)
+      (super tick)
+      (inc last-spawn)
+      (when (last-spawn . >= . spawn-frequency)
+        (set! last-spawn 0)
+        (new enemy% [x (exact->inexact screen-width)] [y (next-y-pos)])))))
 
 
 ;;; MAIN
 
 (define ship (new ship% [x 20.0] [y 400.0]))
-(define enemy (new enemy% [x (exact->inexact screen-width)] [y 400.0]))
+(define enemy (new enemy% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
+(define spawner (new spawner%))
 
 (define (main)
   (SetTargetFPS 60)
