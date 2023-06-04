@@ -145,7 +145,7 @@
 ;;; The ship that the player controls.
 (define ship%
   (class (flipper-mixin (sprite-mixin entity%))
-    (super-new [order 60]
+    (super-new [order 40]
                [width 471.0]
                [height 391.0]
                [scale 0.5]
