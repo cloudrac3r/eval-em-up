@@ -1,5 +1,7 @@
 #lang racket
-(require racket/generator
+(require (only-in racket/gui sleep/yield)
+         racket/generator
+         data/priority-queue
          raylib/generated/unsafe)
 
 
@@ -35,10 +37,15 @@
 
 
 ;;; Graphics and textures
-(define font (delay (LoadFontEx "SourceCodePro-Medium.ttf" 24 #f 0)))
-(define tex (delay (LoadTexture "ship-sheet.png")))
-(define shot-tex (delay (LoadTexture "shot.png")))
-(define basic-tex (delay (LoadTexture "basic-sheet.png")))
+(define font (delay (LoadFontEx "tex/SourceCodePro-Medium.ttf" 24 #f 0)))
+(define tex (delay (LoadTexture "tex/ship-sheet.png")))
+(define shot-tex (delay (LoadTexture "tex/shot.png")))
+(define basic-tex (delay (LoadTexture "tex/basic-sheet.png")))
+(define clunker-tex (delay (LoadTexture "tex/clunker-sheet.png")))
+(define background-tex (delay (LoadTexture "tex/wood-background.png")))
+(define health-background-tex (delay (LoadTexture "tex/health-background.png")))
+(define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
+(define health-bars-tex (delay (LoadTexture "tex/health-bars.png")))
 
 
 (define (eval-mixin %)
@@ -57,14 +64,18 @@
 
 
 ;;; A thing with a presence in the game world. It can be moved, drawn, ticked, and deleted.
-(define entities (mutable-set))
+(define entities (make-priority-queue (λ (a b) (< (get-field order a) (get-field order b)))))
+;;; A parameter of sorted entities, for faster access to the latest data.
+(define es (make-parameter #f))
+(define (update-es!)
+  (es (priority-queue->sorted-vector entities)))
+(update-es!)
 (define entity%
   (eval-mixin
    (class object% (super-new)
-     (set-add! entities this)
-
      (init-field x)
      (init-field y)
+     (init-field order)
 
      (define/public (tick)
        (void))
@@ -74,11 +85,10 @@
 
      (define/public (die)
        (debug "dead: ~a~n" this%)
-       (set-remove! entities this)))))
+       (priority-queue-remove! entities this))
 
+     (priority-queue-insert! entities this))))
 
-;;; Maybe use macros to preload each texture properly? Or if I can just do that with functions?
-;;; Then, class or mixin for an object with a hitbox. Use the sprite sheet size as the hitbox size. Have the collision detection be based on this class and use the hitbox.
 
 (define (sprite-mixin %)
   ;; (printf "building sprite-mixin off ~v~n" %)
@@ -104,15 +114,14 @@
                       (make-Rectangle x y (* width scale) (* height scale)) ;; dest
                       (make-Vector2 0.0 0.0) ;; origin
                       0.0 ;; rotation
-                      ; scale
                       WHITE))
 
     (define/public (touching? that)
       (and
        (or (<= (get-field x this) (get-field x that) (+ (get-field x this) (get-field width this)))
            (<= (get-field x that) (get-field x this) (+ (get-field x that) (get-field width that))))
-       (or (<= (get-field y this) (get-field y that) (+ (get-field y this) (get-field width this)))
-           (<= (get-field y that) (get-field y this) (+ (get-field y that) (get-field width that)))))
+       (or (<= (get-field y this) (get-field y that) (+ (get-field y this) (get-field height this)))
+           (<= (get-field y that) (get-field y this) (+ (get-field y that) (get-field height that)))))
       #;(and ((abs (- (get-field x this) (get-field x that))) . < . 10)
            ((abs (- (get-field y this) (get-field y that))) . < . 10)))))
 
@@ -136,7 +145,8 @@
 ;;; The ship that the player controls.
 (define ship%
   (class (flipper-mixin (sprite-mixin entity%))
-    (super-new [width 471.0]
+    (super-new [order 60]
+               [width 471.0]
                [height 391.0]
                [scale 0.5]
                [sprites-across 2]
@@ -146,7 +156,11 @@
     (inherit-field x y width height scale)
     (field [speed 4]
            [last-shot 0]
-           [shot-spacing 180])
+           [shot-spacing 180]
+           [hp 2]
+           [health-gauge (new health-gauge%
+                              [offset-x 60]
+                              [offset-y 190])])
 
     (define/override (tick)
       (super tick)
@@ -163,13 +177,18 @@
         (when ((current-milliseconds) . > . (+ last-shot shot-spacing))
           (for ([ys (list 178.0 230.0)])
             (new shot% [x (+ x (* (- width 70) scale))] [y (+ y (* ys scale))]))
-          (set! last-shot (current-milliseconds)))))))
+          (set! last-shot (current-milliseconds)))))
+
+    (define/override (draw)
+      (super draw)
+      (send health-gauge draw x y hp))))
 
 
 ;;; Shots fired by the player ship.
 (define shot%
   (class (sprite-mixin entity%)
-    (super-new [width 74.0]
+    (super-new [order 90]
+               [width 74.0]
                [height 20.0]
                [scale 0.5]
                [sprite-tex shot-tex])
@@ -180,7 +199,7 @@
     (define/override (tick)
       (super tick)
       (set! x (+ x speed))
-      (for ([entity (in-set entities)])
+      (for ([entity (in-vector (es))])
         (when (and (is-a? entity enemy%) (send this touching? entity))
           (send entity damage)
           (send this die)))
@@ -188,16 +207,46 @@
         (send this die)))))
 
 
+(define health-gauge%
+  (class object%
+    (super-new)
+    (init-field offset-x offset-y)
+    (init-field [width 179.0]
+                [height 48.0]
+                [scale 0.5])
+    (define bar-breakpoints #(0.0 44.0 76.0 107.0 140.0 179.0))
+
+    (define/public (draw parent-x parent-y hp)
+      (define x (+ parent-x offset-x))
+      (define y (+ parent-y offset-y))
+      ;; background
+      (DrawTexturePro (force health-background-tex) ;; texture
+                      (make-Rectangle 0.0 0.0 width height) ;; source
+                      (make-Rectangle x y (* width scale) (* height scale)) ;; dest
+                      (make-Vector2 0.0 0.0) ;; origin
+                      0.0 ;; rotation
+                      WHITE)
+      ;; bars
+      (define bar-draw-width (vector-ref bar-breakpoints hp))
+      (DrawTexturePro (force health-bars-tex) ;; texture
+                      (make-Rectangle 0.0 0.0 bar-draw-width height) ;; source
+                      (make-Rectangle x y (* bar-draw-width scale) (* height scale)) ;; dest
+                      (make-Vector2 0.0 0.0) ;; origin
+                      0.0 ;; rotation
+                      WHITE)
+      ;; frame
+      (DrawTexturePro (force health-frame-tex) ;; texture
+                      (make-Rectangle 0.0 0.0 width height) ;; source
+                      (make-Rectangle x y (* width scale) (* height scale)) ;; dest
+                      (make-Vector2 0.0 0.0) ;; origin
+                      0.0 ;; rotation
+                      WHITE))))
+
+
 ;;; An enemy that can be shot and attacked to evaluate its code. Most enemies will simply have their code as (die).
 (define enemy%
   (class (flipper-mixin (sprite-mixin entity%))
-    (super-new [width 225.0]
-               [height 121.0]
-               [scale 0.5]
-               [sprite-tex basic-tex]
-               [sprites-across 3]
-               [sprites-in-sheet 3]
-               [flipper-ticks 6])
+    (super-new [order 50])
     (inherit-field x y)
 
     (field [shots-taken 0]
@@ -207,7 +256,7 @@
 
     (define command (string-append "(" base-command ")"))
 
-    (define display-text "")
+    (field [display-text ""])
     (define (compute-display-text)
       (set! display-text
             (case shots-taken
@@ -229,7 +278,19 @@
         (set! can-be-hit-this-tick? #f)
         (compute-display-text)
         (when (shots-taken . >= . 3)
-          (send this eval command))))
+          (send this eval command))))))
+
+
+(define enemy-basic%
+  (class enemy%
+    (super-new [width 225.0]
+               [height 121.0]
+               [scale 0.5]
+               [sprite-tex basic-tex]
+               [sprites-across 3]
+               [sprites-in-sheet 3]
+               [flipper-ticks 6])
+    (inherit-field x y shots-taken display-text)
 
     (define/override (draw)
       (super draw)
@@ -239,28 +300,76 @@
       (DrawTextEx (force font) display-text (make-Vector2 (+ x 46 open-width) (+ y 18)) 24.0 0.0 WHITE))))
 
 
+(define enemy-clunker%
+  (class enemy%
+    (super-new [width 273.0]
+               [height 209.0]
+               [scale 0.5]
+               [sprite-tex clunker-tex]
+               [sprites-across 2]
+               [sprites-in-sheet 2]
+               [flipper-ticks 30])
+    (inherit-field x y shots-taken display-text)
+
+    (define/override (draw)
+      (super draw)
+      (define open-width (if (= shots-taken 2)
+                             -11
+                             0))
+      (DrawTextEx (force font) display-text (make-Vector2 (+ x 40 open-width) (+ y 44)) 24.0 0.0 WHITE))))
+
+
 (define spawner%
   (class entity%
-    (super-new [x 0.0] [y 0.0])
+    (super-new [order 0] [x 0.0] [y 0.0])
     (field [last-spawn 0]
            [spawn-frequency 80]
            [next-y-pos (infinite-generator
                         (yield 50.0)
                         (yield 250.0)
                         (yield 400.0)
-                        (yield 600.0))])
+                        #;(yield 600.0))]
+           [next-enemy (infinite-generator
+                        (yield enemy-clunker%)
+                        (yield enemy-basic%))])
     (define/override (tick)
       (super tick)
       (inc last-spawn)
       (when (last-spawn . >= . spawn-frequency)
         (set! last-spawn 0)
-        (new enemy% [x (exact->inexact screen-width)] [y (next-y-pos)])))))
+        (new (next-enemy) [x (exact->inexact screen-width)] [y (next-y-pos)])))))
+
+
+;;; Screen background.
+(define background%
+  (class (sprite-mixin entity%)
+    (super-new [order 10]
+               [width 3444.0]
+               [height 1440.0]
+               [scale 0.5]
+               [x 0.0]
+               [y 0.0]
+               [sprite-tex background-tex])
+    (inherit-field x y width height scale)
+    (init-field i)
+
+    (set! x (exact->inexact (* i width scale)))
+
+    (define speed -1)
+
+    (define/override (tick)
+      (super tick)
+      (set! x (+ x speed))
+      (when (x . < . (- (* width scale)))
+        (set! x (+ x (* width scale 2)))))))
 
 
 ;;; MAIN
 
+(define background0 (new background% [i 0]))
+(define background1 (new background% [i 1]))
 (define ship (new ship% [x 20.0] [y 400.0]))
-(define enemy (new enemy% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
+(define enemy (new enemy-basic% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
 (define spawner (new spawner%))
 
 (define (main)
@@ -269,23 +378,32 @@
   ;; must initialise window (and opengl context) before any textures can be loaded
   (InitWindow screen-width screen-height "Basic Window")
 
-  (define ball-position (make-Vector2 (/ screen-width 2.0) (/ screen-height 2.0)))
-  ;; (define tex (LoadTexture "/home/cadence/Downloads/hearts.png"))
+  (collect-garbage)
 
   (let loop ((close? #f))
+    (collect-garbage 'incremental)
 
-    (sleep)
+    ;; give repl a chance to run
+    (sleep/yield 0)
 
-    (for ([entity (in-set entities)])
+    ;; compute sorted entities ahead of time
+    (update-es!)
+
+    ;; tick all entities
+    (for ([entity (in-vector (es))])
       (send entity tick))
 
+    ;; recompute sorted entities as some may have died
+    (update-es!)
+
+    ;; draw all entities
     (BeginDrawing)
     (ClearBackground RAYWHITE)
-    (DrawTextEx (force font) "you'll DIE" (make-Vector2 10.0 10.0) 24.0 0.0 BLACK)
-    (for ([entity (in-set entities)])
+    (for ([entity (in-vector (es))])
       (send entity draw))
     (EndDrawing)
 
+    ;; loop until closed
     (if close?
         (CloseWindow)
         (loop (WindowShouldClose)))))
