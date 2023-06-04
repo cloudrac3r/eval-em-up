@@ -21,7 +21,7 @@
 ;;; Important constants
 (define screen-width 1280)
 (define screen-height 720)
-(define debug-mode #t)
+(define debug-mode #f)
 (define (debug . args)
   (when debug-mode
     (if (= (length args) 1)
@@ -55,6 +55,7 @@
 (define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
 (define health-bars-tex (delay (LoadTexture "tex/health-bars.png")))
 (define enemy-shot-tex (delay (LoadTexture "tex/enemy-shot-sheet.png")))
+(define explosion-tex (delay (LoadTexture "tex/explosion-sheet.png")))
 
 
 (define (eval-mixin %)
@@ -113,6 +114,12 @@
     (init-field [sprites-across 1])
     (init-field [sprites-in-sheet 1])
     (init-field [sprite-index 0])
+
+    (define/public (center-x)
+      (+ x (/ (* width scale) 2)))
+
+    (define/public (center-y)
+      (+ y (/ (* height scale) 2)))
 
     (define/override (draw)
       (super draw)
@@ -199,8 +206,9 @@
                               [offset-x 60]
                               [offset-y 190])])
 
-    (define (damage)
-      (set! hp (sub1 hp)))
+    (define (damage by)
+      (set! hp (sub1 hp))
+      (new explosion% [x (send by center-x)] [y (send by center-y)]))
 
     (define/override (tick)
       (super tick)
@@ -221,7 +229,7 @@
       (for ([entity (in-vector (es))])
         (when (and (or (is-a? entity enemy%) (is-a? entity enemy-shot%))
                    (send this touching? entity))
-          (damage)
+          (damage entity)
           (send entity die))))
 
     (define/override (draw)
@@ -476,6 +484,37 @@
       (for/first ([enemy (in-set spawned)]
                   #:when (get-field dead? enemy))
         (send this die)))))
+
+
+;;; Explosion when the player is hit (and maybe also when enemies are hit).
+(define explosion%
+  (class (sprite-mixin entity%)
+    (super-new [order 80]
+               [width 135.0]
+               [height 168.0]
+               [scale 0.5]
+               [sprite-tex explosion-tex]
+               [sprites-in-sheet 3]
+               [sprites-across 3]
+               [sprite-index 0]
+               [hitboxes null])
+    (inherit-field x y width height scale sprite-index)
+    (init-field [explosion-total-time 27])
+    (define ticks-alive 0)
+
+    (set! x (- x (* (/ width 2) scale)))
+    (set! y (- y (* (/ height 2) scale)))
+
+    (define/override (tick)
+      (super tick)
+      (set! ticks-alive (add1 ticks-alive))
+      (set! sprite-index
+            (cond [(< ticks-alive (* explosion-total-time 1/5)) 0]
+                  [(< ticks-alive (* explosion-total-time 2/5)) 1]
+                  [(< ticks-alive (* explosion-total-time 3/5)) 2]
+                  [(< ticks-alive (* explosion-total-time 4/5)) 1]
+                  [(< ticks-alive (* explosion-total-time 5/5)) 0]
+                  [(< ticks-alive (* explosion-total-time 6/5)) (send this die) 0])))))
 
 
 ;;; Screen background.
