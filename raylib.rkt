@@ -21,7 +21,7 @@
 ;;; Important constants
 (define screen-width 1280)
 (define screen-height 720)
-(define debug-mode #f)
+(define debug-mode #t)
 (define (debug . args)
   (when debug-mode
     (if (= (length args) 1)
@@ -85,6 +85,7 @@
      (init-field x)
      (init-field y)
      (init-field order)
+     (field [dead? #f])
 
      (define/public (tick)
        (void))
@@ -94,7 +95,8 @@
 
      (define/public (die)
        (debug "dead: ~a~n" this%)
-       (priority-queue-remove! entities this))
+       (priority-queue-remove! entities this)
+       (set! dead? #t))
 
      (priority-queue-insert! entities this))))
 
@@ -461,12 +463,19 @@
            [next-enemy (infinite-generator
                         (yield enemy-clunker%)
                         (yield enemy-basic%))])
+    (define spawned (mutable-set))
+
     (define/override (tick)
       (super tick)
       (inc last-spawn)
       (when (last-spawn . >= . spawn-frequency)
         (set! last-spawn 0)
-        (new (next-enemy) [x (exact->inexact screen-width)] [y (next-y-pos)])))))
+        (define new-enemy
+          (new (next-enemy) [x (exact->inexact screen-width)] [y (next-y-pos)]))
+        (set-add! spawned new-enemy))
+      (for/first ([enemy (in-set spawned)]
+                  #:when (get-field dead? enemy))
+        (send this die)))))
 
 
 ;;; Screen background.
