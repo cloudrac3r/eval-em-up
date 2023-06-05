@@ -164,21 +164,21 @@
     (define/public (touching? that)
       (define sprites-touching?
         (rectangles-touching?
-         (get-field x this) (get-field y this) (* scale (get-field width this)) (* scale (get-field height this))
-         (get-field x that) (get-field y that) (* scale (get-field width that)) (* scale (get-field height that))))
+         (get-field x this) (get-field y this) (* (get-field scale this) (get-field width this)) (* (get-field scale this) (get-field height this))
+         (get-field x that) (get-field y that) (* (get-field scale that) (get-field width that)) (* (get-field scale that) (get-field height that))))
       (if (not sprites-touching?)
           #f
           (for*/or ([hitbox1 (get-field hitboxes this)]
                     [hitbox2 (get-field hitboxes that)])
             (rectangles-touching?
-             (+ (get-field x this) (* scale (vector-ref hitbox1 0)))
-             (+ (get-field y this) (* scale (vector-ref hitbox1 1)))
-             (* scale (vector-ref hitbox1 2))
-             (* scale (vector-ref hitbox1 3))
-             (+ (get-field x that) (* scale (vector-ref hitbox2 0)))
-             (+ (get-field y that) (* scale (vector-ref hitbox2 1)))
-             (* scale (vector-ref hitbox2 2))
-             (* scale (vector-ref hitbox2 3))))))))
+             (+ (get-field x this) (* (get-field scale this) (vector-ref hitbox1 0)))
+             (+ (get-field y this) (* (get-field scale this) (vector-ref hitbox1 1)))
+             (* (get-field scale this) (vector-ref hitbox1 2))
+             (* (get-field scale this) (vector-ref hitbox1 3))
+             (+ (get-field x that) (* (get-field scale that) (vector-ref hitbox2 0)))
+             (+ (get-field y that) (* (get-field scale that) (vector-ref hitbox2 1)))
+             (* (get-field scale that) (vector-ref hitbox2 2))
+             (* (get-field scale that) (vector-ref hitbox2 3))))))))
 
 (define (flipper-mixin %)
   ;; (printf "building flipper-mixin off ~v~n" %)
@@ -325,7 +325,7 @@
         e))
     (define speed 4)
     ;; I forgot the trig calculations to do this, so time for a funny hack with complex numbers
-    (define difference-complex (make-rectangular (- (get-field x ship) x) (- (get-field y ship) y)))
+    (define difference-complex (make-rectangular (- (send ship center-x) (send this center-x)) (- (send ship center-y) (send this center-y))))
     (define velocity-complex (make-polar speed (angle difference-complex)))
     (define velocity-x (real-part velocity-complex))
     (define velocity-y (imag-part velocity-complex))
@@ -581,7 +581,7 @@
         (for/first ([e (es)]
                     #:when (is-a? e ship%))
           e))
-      (define base-ang (angle (make-rectangular (- (get-field x ship) x) (- (get-field y ship) y))))
+      (define base-ang (angle (make-rectangular (- (send ship center-x) (send this center-x)) (- (send ship center-y) (send this center-y)))))
       (for ([ang (in-range pi (- pi) (/ (* -2 pi) 16))])
         (define combined-ang (+ ang base-ang)) ;; (- (modulo (+ ang base-ang) (* 2 pi)) pi))
         (new explosion-shot% [x (send this center-x)] [y (send this center-y)] [ang combined-ang])))
@@ -594,7 +594,7 @@
       (define open-width (if (= shots-taken 2)
                              -11
                              0))
-      (DrawTextEx (force font) display-text (make-Vector2 (+ x 40 open-width) (+ y 44)) 24.0 0.0 WHITE))))
+      (DrawTextEx (force font) display-text (make-Vector2 (+ x 79 open-width) (+ y 74)) 24.0 0.0 WHITE))))
 
 
 (define spawner%
