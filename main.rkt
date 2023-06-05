@@ -52,6 +52,7 @@
 (define basic-tex (delay (LoadTexture "tex/basic-sheet.png")))
 (define clunker-tex (delay (LoadTexture "tex/clunker-sheet.png")))
 (define dripper-tex (delay (LoadTexture "tex/dripper.png")))
+(define boss-tex (delay (LoadTexture "tex/boss.png")))
 (define background-tex (delay (LoadTexture "tex/blackboard.png")))
 (define health-background-tex (delay (LoadTexture "tex/health-background.png")))
 (define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
@@ -74,11 +75,17 @@
   (class % (super-new)
     (define methods (interface->method-names (object-interface this)))
     (define/public (eval str)
+      (debug "cmd: ~v~n" str)
+      (define op (open-input-string str))
+      (define cmds
+        (for/list ([cmd (in-producer (λ _ (let ([cmd (read op)])
+                                            (if (eof-object? cmd) #f cmd))) #f)])
+          cmd))
       (define template
         `(λ (self)
            ,@(for/list ([method methods])
                `(define (,method . args) (send/apply self ,method args)))
-           ,(read (open-input-string str))))
+           ,@cmds))
       (debug "to eval: ~v~n" template)
       ((-eval template ns) this))))
 
@@ -242,7 +249,7 @@
         (when (and (or (is-a? entity enemy%) (is-a? entity enemy-shot%))
                    (send this touching? entity))
           (damage entity)
-          (send entity die))))
+          (send entity contact))))
 
     (define/override (draw)
       (super draw)
@@ -293,6 +300,13 @@
 ;;; Shots fired by the enemy ships.
 (define enemy-shot%
   (class (die-offscreen-mixin (flipper-mixin (sprite-mixin entity%)))
+    (super-new)
+    (define/public (contact)
+      (send this die))))
+
+
+(define enemy-shot-aimed%
+  (class enemy-shot%
     (super-new [order 90]
                [width 49.0]
                [height 44.0]
@@ -323,7 +337,7 @@
 
 
 (define explosion-shot%
-  (class (die-offscreen-mixin (flipper-mixin (sprite-mixin entity%)))
+  (class enemy-shot%
     (super-new [order 91]
                [width 49.0]
                [height 44.0]
@@ -337,13 +351,14 @@
                            #(38 10 5 21))])
     (init-field ang)
     (inherit-field x y)
-    (define speed 3)
-    (define velocity-complex (make-polar speed ang))
-    (define velocity-x (real-part velocity-complex))
-    (define velocity-y (imag-part velocity-complex))
+    (define speed 1.8)
 
     (define/override (tick)
       (super tick)
+      (set! speed (* speed 1.025))
+      (define velocity-complex (make-polar speed ang))
+      (define velocity-x (real-part velocity-complex))
+      (define velocity-y (imag-part velocity-complex))
       (set! x (+ x velocity-x))
       (set! y (+ y velocity-y)))))
 
@@ -430,6 +445,9 @@
     (define/public (hit)
       (send this die))
 
+    (define/public (contact)
+      (send this die))
+
     (define/public (damage)
       (when can-be-hit-this-tick?
         (set! shots-taken (add1 shots-taken))
@@ -449,7 +467,7 @@
                [sprites-in-sheet 3]
                [flipper-ticks 6]
                [shot-time-ticks 110]
-               [shot-class% enemy-shot%]
+               [shot-class% enemy-shot-aimed%]
                [hitboxes '(#(20 56 52 13)
                            #(72 42 23 37)
                            #(95 35 85 50)
@@ -526,6 +544,50 @@
       (for ([ang (in-range pi (- pi) (/ (* -2 pi) 16))])
         (new explosion-shot% [x (send this center-x)] [y (send this center-y)] [ang ang]))
       (send this hit))
+
+    (define/override (draw)
+      (super draw)
+      (define open-width (if (= shots-taken 2)
+                             -11
+                             0))
+      (DrawTextEx (force font) display-text (make-Vector2 (+ x 40 open-width) (+ y 44)) 24.0 0.0 WHITE))))
+
+(define enemy-boss%
+  (class enemy%
+    (super-new [width 542.0]
+               [height 283.0]
+               [scale 1.0]
+               [sprite-tex boss-tex]
+               [flipper-ticks +inf.0]
+               [base-command "let loop ()\n  (cond [(= (get-i) 30) (hit)]\n        [#t (blast) (increment-i)])"]
+               [hitboxes '(#(57 48 435 55)
+                           #(117 103 375 95)
+                           #(62 198 430 30))])
+    (inherit-field x y shots-taken display-text)
+    (define i 0)
+
+    (define/public (get-i) i)
+    (define/public (increment-i) (inc i))
+
+    (define speed -1.5)
+
+    (define/override (tick)
+      (super tick)
+      (when (x . > . (/ screen-width 2))
+        (set! x (+ x speed))))
+
+    (define/public (blast)
+      (define ship
+        (for/first ([e (es)]
+                    #:when (is-a? e ship%))
+          e))
+      (define base-ang (angle (make-rectangular (- (get-field x ship) x) (- (get-field y ship) y))))
+      (for ([ang (in-range pi (- pi) (/ (* -2 pi) 16))])
+        (define combined-ang (+ ang base-ang)) ;; (- (modulo (+ ang base-ang) (* 2 pi)) pi))
+        (new explosion-shot% [x (send this center-x)] [y (send this center-y)] [ang combined-ang])))
+
+    (define/override (contact)
+      (void))
 
     (define/override (draw)
       (super draw)
@@ -682,7 +744,7 @@
             ;; yes - wait for all enemies to be killed, then proceed to the next wave
             (when (for/and ([enemy (in-set wave-enemies)]) (get-field dead? enemy))
               (set! pointer 0)
-              (set! ticks 0)
+              (set! ticks -45)
               (set-clear! wave-enemies)
               (inc wave-index)
               (when (wave-index . >= . (vector-length waves))
@@ -691,8 +753,7 @@
 
 ;;; Wave definitions
 (define waves-def
-  `(((spawn ,enemy-dripper% 300))
-    ((spawn ,enemy-clunker% 300)
+  `(((spawn ,enemy-clunker% 300)
      (wait 80)
      (spawn ,enemy-clunker% 80))
     ((spawn ,enemy-basic% 100)
@@ -712,7 +773,23 @@
      (wait 90)
      (spawn ,enemy-basic% 100)
      (wait 10)
-     (spawn ,enemy-basic% 300))))
+     (spawn ,enemy-basic% 300))
+    ((spawn ,enemy-dripper% 150))
+    ((spawn ,enemy-basic% 80)
+     (wait 45)
+     (spawn ,enemy-basic% 55)
+     (wait 75)
+     (spawn ,enemy-dripper% 90)
+     (spawn ,enemy-basic% 400)
+     (wait 40)
+     (spawn ,enemy-basic% 420)
+     (wait 40)
+     (spawn ,enemy-basic% 440)
+     (wait 30)
+     (spawn ,enemy-basic% 350)
+     (wait 100)
+     (spawn ,enemy-dripper% 150))
+    ((spawn ,enemy-boss% 150))))
 
 (define current-tick 0)
 (define waves
@@ -723,6 +800,7 @@
                       [(wait) (set! current-tick (+ current-tick (second row))) #f]
                       [(spawn) (cons current-tick (cdr row))]))]
                  #:when row)
+      (set! current-tick 0)
       row)))
 
 
@@ -730,7 +808,7 @@
 
 (define background0 (new background% [i 0]))
 (define background1 (new background% [i 1]))
-(define ship (new ship% [x 20.0] [y 400.0]))
+(define ship (new ship% [x 220.0] [y 250.0]))
 ;; (define enemy (new enemy-basic% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
 ;; (define spawner (new spawner%))
 (define chalk-spawner (new chalk-spawner%))
@@ -772,5 +850,5 @@
         (CloseWindow)
         (loop (WindowShouldClose)))))
 
-(thread main)
-;; (thread-wait (thread main)) ;; TODO: use this line
+;; (thread main)
+(thread-wait (thread main)) ;; TODO: use this line
