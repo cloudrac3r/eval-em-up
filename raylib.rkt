@@ -51,6 +51,7 @@
 (define shot-tex (delay (LoadTexture "tex/shot.png")))
 (define basic-tex (delay (LoadTexture "tex/basic-sheet.png")))
 (define clunker-tex (delay (LoadTexture "tex/clunker-sheet.png")))
+(define dripper-tex (delay (LoadTexture "tex/dripper.png")))
 (define background-tex (delay (LoadTexture "tex/blackboard.png")))
 (define health-background-tex (delay (LoadTexture "tex/health-background.png")))
 (define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
@@ -63,7 +64,8 @@
           (list 237 299 (delay (LoadTexture "tex/chalk-icecream.png")))
           (list 236 213 (delay (LoadTexture "tex/chalk-threes.png")))
           (list 187 327 (delay (LoadTexture "tex/chalk-uwu.png")))
-          (list 218 158 (delay (LoadTexture "tex/chalk-vv.png")))))
+          (list 218 158 (delay (LoadTexture "tex/chalk-vv.png")))
+          (list 236 213 (delay (LoadTexture "tex/chalk-star.png")))))
 
 
 (define (eval-mixin %)
@@ -276,13 +278,16 @@
     (super-new)
     (inherit-field x y width height scale)
 
+    (define/public (offscreen)
+      (send this die))
+
     (define/override (tick)
       (super tick)
       (when (or ((+ x (* scale width)) . < . 0)
                 ((+ y (* scale height)) . < . 0)
                 (x . > . screen-width)
                 (y . > . screen-height))
-        (send this die)))))
+        (offscreen)))))
 
 
 ;;; Shots fired by the enemy ships.
@@ -306,7 +311,8 @@
         e))
     (define speed 4)
     ;; I forgot the trig calculations to do this, so time for a funny hack with complex numbers
-    (define velocity-complex (make-polar speed (angle (make-rectangular (- (get-field x ship) x) (- (get-field y ship) y)))))
+    (define difference-complex (make-rectangular (- (get-field x ship) x) (- (get-field y ship) y)))
+    (define velocity-complex (make-polar speed (angle difference-complex)))
     (define velocity-x (real-part velocity-complex))
     (define velocity-y (imag-part velocity-complex))
 
@@ -316,6 +322,31 @@
       (set! y (+ y velocity-y)))))
 
 
+(define explosion-shot%
+  (class (die-offscreen-mixin (flipper-mixin (sprite-mixin entity%)))
+    (super-new [order 91]
+               [width 49.0]
+               [height 44.0]
+               [scale 0.5]
+               [sprites-across 2]
+               [sprites-in-sheet 2]
+               [flipper-ticks 15]
+               [sprite-tex enemy-shot-tex]
+               [hitboxes '(#(7 11 8 25)
+                           #(15 5 23 36)
+                           #(38 10 5 21))])
+    (init-field ang)
+    (inherit-field x y)
+    (define speed 3)
+    (define velocity-complex (make-polar speed ang))
+    (define velocity-x (real-part velocity-complex))
+    (define velocity-y (imag-part velocity-complex))
+
+    (define/override (tick)
+      (super tick)
+      (set! x (+ x velocity-x))
+      (set! y (+ y velocity-y)))))
+
 
 ;;; Mixin for an enemy that regularly fires directly at the player
 (define (shot-regular-mixin %)
@@ -324,7 +355,7 @@
     (inherit-field x y)
     (init-field shot-time-ticks)
     (init-field shot-class%)
-    (define shot-time-count 0)
+    (define shot-time-count (/ shot-time-ticks 2))
 
     (define/override (tick)
       (super tick)
@@ -379,7 +410,7 @@
 
     (field [shots-taken 0]
            [can-be-hit-this-tick? #t])
-    (field [base-command "die"])
+    (init-field [base-command "hit"])
 
     (define command (string-append "(" base-command ")"))
 
@@ -395,6 +426,9 @@
     (define/override (tick)
       (super tick)
       (set! can-be-hit-this-tick? #t))
+
+    (define/public (hit)
+      (send this die))
 
     (define/public (damage)
       (when can-be-hit-this-tick?
@@ -468,6 +502,39 @@
       (DrawTextEx (force font) display-text (make-Vector2 (+ x 40 open-width) (+ y 44)) 24.0 0.0 WHITE))))
 
 
+(define enemy-dripper%
+  (class enemy%
+    (super-new [width 395.0]
+               [height 232.0]
+               [scale 0.5]
+               [sprite-tex dripper-tex]
+               [flipper-ticks +inf.0]
+               [base-command "explode"]
+               [hitboxes '(#(45 40 170 160)
+                           #(215 65 60 105)
+                           #(275 55 20 105)
+                           #(295 70 65 65))])
+    (inherit-field x y shots-taken display-text)
+
+    (define speed -1.5)
+
+    (define/override (tick)
+      (super tick)
+      (set! x (+ x speed)))
+
+    (define/public (explode)
+      (for ([ang (in-range pi (- pi) (/ (* -2 pi) 16))])
+        (new explosion-shot% [x (send this center-x)] [y (send this center-y)] [ang ang]))
+      (send this hit))
+
+    (define/override (draw)
+      (super draw)
+      (define open-width (if (= shots-taken 2)
+                             -11
+                             0))
+      (DrawTextEx (force font) display-text (make-Vector2 (+ x 40 open-width) (+ y 44)) 24.0 0.0 WHITE))))
+
+
 (define spawner%
   (class entity%
     (super-new [order 0] [x 0.0] [y 0.0])
@@ -494,14 +561,6 @@
       (for/first ([enemy (in-set spawned)]
                   #:when (get-field dead? enemy))
         (send this die)))))
-
-
-(define wave-spawner%
-  (class entity%
-    (super-new [order 0] [x 0.0] [y 0.0])
-
-    (define/override (tick)
-      (super tick))))
 
 
 ;;; Explosion when the player is hit.
@@ -583,7 +642,7 @@
   (class entity%
     (super-new [order 0] [x 0.0] [y 0.0])
     (field [last-spawn 0]
-           [spawn-frequency 1200])
+           [spawn-frequency 400])
 
     (define/override (tick)
       (super tick)
@@ -594,20 +653,94 @@
         (new chalk%)))))
 
 
+;;; Spawn enemies according to the defined waves
+(define wave-spawner%
+  (class entity%
+    (super-new [order 0] [x 0.0] [y 0.0])
+    (define ticks 0)
+    (define wave-index 0)
+    (define pointer 0)
+    (define wave-enemies (mutable-set))
+
+    (define/override (tick)
+      (super tick)
+      (inc ticks)
+      ;; current wave (list of spawning occurrences)
+      (define wave (vector-ref waves wave-index))
+      (define enemies (mutable-set))
+      (let loop ()
+        ;; has this whole wave been spawned yet?
+        (define wave-all-spawned? (pointer . >= . (vector-length wave)))
+        (if (not wave-all-spawned?)
+            ;; no - check if we should spawn the next thing
+            (let ([next (vector-ref wave pointer)])
+              (when (ticks . >= . (car next))
+                (define enemy (new (second next) [x (exact->inexact screen-width)] [y (exact->inexact (third next))]))
+                (set-add! wave-enemies enemy)
+                (set! pointer (add1 pointer))
+                (loop)))
+            ;; yes - wait for all enemies to be killed, then proceed to the next wave
+            (when (for/and ([enemy (in-set wave-enemies)]) (get-field dead? enemy))
+              (set! pointer 0)
+              (set! ticks 0)
+              (set-clear! wave-enemies)
+              (inc wave-index)
+              (when (wave-index . >= . (vector-length waves))
+                (send this die))))))))
+
+
+;;; Wave definitions
+(define waves-def
+  `(((spawn ,enemy-dripper% 300))
+    ((spawn ,enemy-clunker% 300)
+     (wait 80)
+     (spawn ,enemy-clunker% 80))
+    ((spawn ,enemy-basic% 100)
+     (wait 100)
+     (spawn ,enemy-basic% 300)
+     (wait 20)
+     (spawn ,enemy-basic% 400))
+    ((spawn ,enemy-basic% 100)
+     (wait 60)
+     (spawn ,enemy-basic% 300)
+     (wait 20)
+     (spawn ,enemy-basic% 500)
+     (wait 60)
+     (spawn ,enemy-clunker% 200)
+     (wait 10)
+     (spawn ,enemy-basic% 400)
+     (wait 90)
+     (spawn ,enemy-basic% 100)
+     (wait 10)
+     (spawn ,enemy-basic% 300))))
+
+(define current-tick 0)
+(define waves
+  (for/vector ([wave-def waves-def])
+    (for/vector ([row
+                  (for/list ([row wave-def])
+                    (case (car row)
+                      [(wait) (set! current-tick (+ current-tick (second row))) #f]
+                      [(spawn) (cons current-tick (cdr row))]))]
+                 #:when row)
+      row)))
+
+
 ;;; MAIN
 
 (define background0 (new background% [i 0]))
 (define background1 (new background% [i 1]))
 (define ship (new ship% [x 20.0] [y 400.0]))
-(define enemy (new enemy-basic% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
-(define spawner (new spawner%))
+;; (define enemy (new enemy-basic% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
+;; (define spawner (new spawner%))
 (define chalk-spawner (new chalk-spawner%))
+(define wave-spawner (new wave-spawner%))
 
 (define (main)
   (SetTargetFPS 60)
 
   ;; must initialise window (and opengl context) before any textures can be loaded
-  (InitWindow screen-width screen-height "Eval-Em-Up!")
+  (InitWindow screen-width screen-height "Eval-em-up!")
 
   (collect-garbage)
 
@@ -640,3 +773,4 @@
         (loop (WindowShouldClose)))))
 
 (thread main)
+;; (thread-wait (thread main)) ;; TODO: use this line
