@@ -2,6 +2,7 @@
 (require (only-in racket/gui sleep/yield)
          racket/generator
          racket/random
+         racket/runtime-path
          data/priority-queue
          raylib/generated/unsafe)
 
@@ -9,6 +10,15 @@
 ;;; Macros
 (define-syntax-rule (inc var)
   (set! var (add1 var)))
+
+
+(define-syntax (define-tex stx)
+  (syntax-case stx ()
+    [(_ var (fn path args ...))
+     (let ([new-sym (gensym "tex")])
+       #`(begin
+           (define-runtime-path #,new-sym path)
+           (define var (delay (fn #,new-sym args ...)))))]))
 
 
 (define (rectangles-touching? x1 y1 w1 h1 x2 y2 w2 h2)
@@ -20,6 +30,7 @@
 
 
 ;;; Important constants
+(define ns (module->namespace 'racket))
 (define screen-width 1280)
 (define screen-height 720)
 (define debug-mode? #f)
@@ -46,34 +57,41 @@
 
 
 ;;; Graphics and textures
-(define font (delay (LoadFontEx "tex/SourceCodePro-Medium.ttf" 24 #f 0)))
-(define tex (delay (LoadTexture "tex/ship-sheet.png")))
-(define shot-tex (delay (LoadTexture "tex/shot.png")))
-(define basic-tex (delay (LoadTexture "tex/basic-sheet.png")))
-(define clunker-tex (delay (LoadTexture "tex/clunker-sheet.png")))
-(define dripper-tex (delay (LoadTexture "tex/dripper.png")))
-(define boss-tex (delay (LoadTexture "tex/boss.png")))
-(define background-tex (delay (LoadTexture "tex/blackboard.png")))
-(define health-background-tex (delay (LoadTexture "tex/health-background.png")))
-(define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
-(define health-bars-tex (delay (LoadTexture "tex/health-bars.png")))
-(define enemy-shot-tex (delay (LoadTexture "tex/enemy-shot-sheet.png")))
-(define explosion-tex (delay (LoadTexture "tex/explosion-sheet.png")))
-(define wasd-tutorial-tex (delay (LoadTexture "tex/wasd.png")))
-(define space-tutorial-tex (delay (LoadTexture "tex/spaceshoot.png")))
-(define game-over-tex (delay (LoadTexture "tex/gameover.png")))
+(define-tex font (LoadFontEx "tex/SourceCodePro-Medium.ttf" 24 #f 0))
+(define-tex tex (LoadTexture "tex/ship-sheet.png"))
+(define-tex shot-tex (LoadTexture "tex/shot.png"))
+(define-tex basic-tex (LoadTexture "tex/basic-sheet.png"))
+(define-tex clunker-tex (LoadTexture "tex/clunker-sheet.png"))
+(define-tex dripper-tex (LoadTexture "tex/dripper.png"))
+(define-tex boss-tex (LoadTexture "tex/boss.png"))
+(define-tex background-tex (LoadTexture "tex/blackboard.png"))
+(define-tex health-background-tex (LoadTexture "tex/health-background.png"))
+(define-tex health-frame-tex (LoadTexture "tex/health-frame.png"))
+(define-tex health-bars-tex (LoadTexture "tex/health-bars.png"))
+(define-tex enemy-shot-tex (LoadTexture "tex/enemy-shot-sheet.png"))
+(define-tex explosion-tex (LoadTexture "tex/explosion-sheet.png"))
+(define-tex wasd-tutorial-tex (LoadTexture "tex/wasd.png"))
+(define-tex space-tutorial-tex (LoadTexture "tex/spaceshoot.png"))
+(define-tex game-over-tex (LoadTexture "tex/gameover.png"))
+(define-tex chalk-angel-tex (LoadTexture "tex/chalk-angel.png"))
+(define-tex chalk-heart-tex (LoadTexture "tex/chalk-heart.png"))
+(define-tex chalk-icecream-tex (LoadTexture "tex/chalk-icecream.png"))
+(define-tex chalk-threes-tex (LoadTexture "tex/chalk-threes.png"))
+(define-tex chalk-uwu-tex (LoadTexture "tex/chalk-uwu.png"))
+(define-tex chalk-vv-tex (LoadTexture "tex/chalk-vv.png"))
+(define-tex chalk-star-tex (LoadTexture "tex/chalk-star.png"))
+
 (define chalk-texes
-  (vector (list 425 324 (delay (LoadTexture "tex/chalk-angel.png")))
-          (list 442 510 (delay (LoadTexture "tex/chalk-heart.png")))
-          (list 237 299 (delay (LoadTexture "tex/chalk-icecream.png")))
-          (list 236 213 (delay (LoadTexture "tex/chalk-threes.png")))
-          (list 187 327 (delay (LoadTexture "tex/chalk-uwu.png")))
-          (list 218 158 (delay (LoadTexture "tex/chalk-vv.png")))
-          (list 236 213 (delay (LoadTexture "tex/chalk-star.png")))))
+  (vector (list 425 324 chalk-angel-tex)
+          (list 442 510 chalk-heart-tex)
+          (list 237 299 chalk-icecream-tex)
+          (list 236 213 chalk-threes-tex)
+          (list 187 327 chalk-uwu-tex)
+          (list 218 158 chalk-vv-tex)
+          (list 236 213 chalk-star-tex)))
 
 
 (define (eval-mixin %)
-  (define ns (module->namespace 'racket))
   (define -eval eval)
   (class % (super-new)
     (define methods (interface->method-names (object-interface this)))
@@ -952,7 +970,7 @@
   ;; must initialise window (and opengl context) before any textures can be loaded
   (InitWindow screen-width screen-height "Eval-em-up!")
 
-  (eval '(void)) ;; prevent small lag spike when shooting first enemy
+  (eval '(void) ns) ;; prevent small lag spike when shooting first enemy
 
   (collect-garbage)
 
