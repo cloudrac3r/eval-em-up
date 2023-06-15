@@ -1,6 +1,7 @@
 #lang racket
 (require (only-in racket/gui sleep/yield)
          racket/generator
+         racket/random
          data/priority-queue
          raylib/generated/unsafe)
 
@@ -50,12 +51,19 @@
 (define shot-tex (delay (LoadTexture "tex/shot.png")))
 (define basic-tex (delay (LoadTexture "tex/basic-sheet.png")))
 (define clunker-tex (delay (LoadTexture "tex/clunker-sheet.png")))
-(define background-tex (delay (LoadTexture "tex/wood-background.png")))
+(define background-tex (delay (LoadTexture "tex/blackboard.png")))
 (define health-background-tex (delay (LoadTexture "tex/health-background.png")))
 (define health-frame-tex (delay (LoadTexture "tex/health-frame.png")))
 (define health-bars-tex (delay (LoadTexture "tex/health-bars.png")))
 (define enemy-shot-tex (delay (LoadTexture "tex/enemy-shot-sheet.png")))
 (define explosion-tex (delay (LoadTexture "tex/explosion-sheet.png")))
+(define chalk-texes
+  (vector (list 425 324 (delay (LoadTexture "tex/chalk-angel.png")))
+          (list 442 510 (delay (LoadTexture "tex/chalk-heart.png")))
+          (list 237 299 (delay (LoadTexture "tex/chalk-icecream.png")))
+          (list 236 213 (delay (LoadTexture "tex/chalk-threes.png")))
+          (list 187 327 (delay (LoadTexture "tex/chalk-uwu.png")))
+          (list 218 158 (delay (LoadTexture "tex/chalk-vv.png")))))
 
 
 (define (eval-mixin %)
@@ -208,6 +216,8 @@
 
     (define (damage by)
       (set! hp (sub1 hp))
+      (when (= hp 0)
+        (send this die))
       (new explosion% [x (send by center-x)] [y (send by center-y)]))
 
     (define/override (tick)
@@ -320,7 +330,7 @@
       (super tick)
       (set! shot-time-count (add1 shot-time-count))
       (when (shot-time-count . >= . shot-time-ticks)
-        (new shot-class% [x x] [y y])
+        (new shot-class% [x (send this center-x)] [y (send this center-y)])
         (set! shot-time-count 0)))))
 
 
@@ -486,7 +496,15 @@
         (send this die)))))
 
 
-;;; Explosion when the player is hit (and maybe also when enemies are hit).
+(define wave-spawner%
+  (class entity%
+    (super-new [order 0] [x 0.0] [y 0.0])
+
+    (define/override (tick)
+      (super tick))))
+
+
+;;; Explosion when the player is hit.
 (define explosion%
   (class (sprite-mixin entity%)
     (super-new [order 80]
@@ -521,9 +539,9 @@
 (define background%
   (class (sprite-mixin entity%)
     (super-new [order 10]
-               [width 3444.0]
-               [height 1440.0]
-               [scale 0.5]
+               [width 3153.0]
+               [height 720.0]
+               [scale 1.0]
                [x 0.0]
                [y 0.0]
                [sprite-tex background-tex]
@@ -542,6 +560,40 @@
         (set! x (+ x (* width scale 2)))))))
 
 
+(define chalk%
+  (class (die-offscreen-mixin (sprite-mixin entity%))
+    (define-values (width height tex) (apply values (random-ref chalk-texes)))
+    (super-new [order 11]
+               [width (exact->inexact width)]
+               [height (exact->inexact height)]
+               [scale 1.0]
+               [x (exact->inexact screen-width)]
+               [y (exact->inexact (* (random) (- screen-height height)))]
+               [sprite-tex tex]
+               [hitboxes null])
+    (inherit-field x)
+    (define speed -1)
+
+    (define/override (tick)
+      (super tick)
+      (set! x (+ x speed)))))
+
+
+(define chalk-spawner%
+  (class entity%
+    (super-new [order 0] [x 0.0] [y 0.0])
+    (field [last-spawn 0]
+           [spawn-frequency 1200])
+
+    (define/override (tick)
+      (super tick)
+      (inc last-spawn)
+      (when (last-spawn . >= . spawn-frequency)
+        (set! last-spawn 0)
+        (set! spawn-frequency (random 1000 1700))
+        (new chalk%)))))
+
+
 ;;; MAIN
 
 (define background0 (new background% [i 0]))
@@ -549,6 +601,7 @@
 (define ship (new ship% [x 20.0] [y 400.0]))
 (define enemy (new enemy-basic% [x (- (exact->inexact screen-width) 200)] [y 400.0]))
 (define spawner (new spawner%))
+(define chalk-spawner (new chalk-spawner%))
 
 (define (main)
   (SetTargetFPS 60)
