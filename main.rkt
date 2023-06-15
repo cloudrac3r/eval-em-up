@@ -129,8 +129,6 @@
 
 
 (define (sprite-mixin %)
-  ;; (printf "building sprite-mixin off ~v~n" %)
-  ;; (println (interface->method-names (class->interface %)))
   (class % (super-new) (inherit-field x y)
     (init-field width)
     (init-field height)
@@ -151,8 +149,6 @@
       (super draw)
       (define u (* width (exact->inexact (modulo sprite-index sprites-across))))
       (define v (* height (exact->inexact (quotient sprite-index sprites-across))))
-      #;(define source (make-Rectangle 0.0 (add1 height) 100.0 height))
-      #;(define source (make-Rectangle 0.0 0.0 100.0 height))
       (define source (make-Rectangle u v width height))
       (DrawTexturePro (force sprite-tex) ;; texture
                       source
@@ -200,8 +196,6 @@
         (set! show-hitboxes? (not show-hitboxes?))))))
 
 (define (flipper-mixin %)
-  ;; (printf "building flipper-mixin off ~v~n" %)
-  ;; (println (interface->method-names (class->interface %)))
   (class % (super-new) (inherit-field sprite-index sprites-in-sheet)
     (init-field flipper-ticks)
     (define flipper-count 0)
@@ -737,7 +731,7 @@
           e))
       (define base-ang (angle (make-rectangular (- (send ship center-x) (send this center-x)) (- (send ship center-y) (send this center-y)))))
       (for ([ang (in-range pi (- pi) (/ (* -2 pi) 16))])
-        (define combined-ang (+ ang base-ang)) ;; (- (modulo (+ ang base-ang) (* 2 pi)) pi))
+        (define combined-ang (+ ang base-ang))
         (new explosion-shot% [x (send this center-x)] [y (send this center-y)] [ang combined-ang])))
 
     (define/override (contact)
@@ -749,34 +743,6 @@
                              -11
                              0))
       (DrawTextEx (force font) display-text (make-Vector2 (+ x 79 open-width) (+ y 74)) 24.0 0.0 WHITE))))
-
-
-(define spawner%
-  (class entity%
-    (super-new [order 0] [x 0.0] [y 0.0])
-    (field [last-spawn 0]
-           [spawn-frequency 80]
-           [next-y-pos (infinite-generator
-                        (yield 50.0)
-                        (yield 250.0)
-                        (yield 400.0)
-                        #;(yield 600.0))]
-           [next-enemy (infinite-generator
-                        (yield enemy-clunker%)
-                        (yield enemy-basic%))])
-    (define spawned (mutable-set))
-
-    (define/override (tick)
-      (super tick)
-      (inc last-spawn)
-      (when (last-spawn . >= . spawn-frequency)
-        (set! last-spawn 0)
-        (define new-enemy
-          (new (next-enemy) [x (exact->inexact screen-width)] [y (next-y-pos)]))
-        (set-add! spawned new-enemy))
-      (for/first ([enemy (in-set spawned)]
-                  #:when (get-field dead? enemy))
-        (send this die)))))
 
 
 ;;; Explosion when the player is hit.
@@ -1024,5 +990,4 @@
         (CloseWindow)
         (loop (WindowShouldClose)))))
 
-;; (thread main)
-(thread-wait (thread main)) ;; TODO: use this line
+(thread-wait (thread main)) ;; TODO: ensure this line includes (thread-wait ...) before compiling
